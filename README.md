@@ -58,18 +58,14 @@ nrf24.set_auto_ack(&[false; 6])?;
 nrf24.set_crc(&nrf24::CrcMode::Disabled)?;
 nrf24.set_tx_addr(&b"fnord"[..])?;
 ```
+Before first use, it's recommended to call `nb::block!(rf24.wait_tx_empty())` 
+to flush after a soft restart.
 
-### `RXMode`
+Use `nrf24.wait_rx_ready()` to poll (returning the pipe number).
+Use `nrf24.read()` to receive a packet.
 
-Use `rx.can_read()` to poll (returning the pipe number), then
-`rx.read()` to receive payload.
-
-### `TXMode`
-
-Use `tx.send()` to enqueue a packet.
-
-Use `tx.can_send()` to prevent sending on a full queue, and
-`tx.wait_empty()` to flush.
-
+Use `nrf24.wait_tx_ready()` to wait for space in tx queue.
+Use `nrf24.send()` to enqueue a packet.
+Use `nrf24.wait_tx_empty()` to flush the tx queue.
 
 [embedded-hal]: https://crates.io/crates/embedded-hal
