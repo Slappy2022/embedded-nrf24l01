@@ -29,30 +29,25 @@ impl<D: Device> RxMode<D> {
         StandbyMode::from_rx_tx(self.device)
     }
 
-    /// Is there any incoming data to read? Return the pipe number.
-    ///
-    /// This function acknowledges all interrupts even if there are more received packets, so the
-    /// caller must repeat the call until the function returns None before waiting for the next RX
-    /// interrupt.
-    pub fn can_read(&mut self) -> Result<Option<u8>, D::Error> {
-        // Acknowledge all interrupts.
-        // Note that we cannot selectively acknowledge the RX interrupt here - if any TX interrupt
-        // is still active, the IRQ pin could otherwise not be used for RX interrupts.
+    /// Return the pipe number of the next packet, if any exists. Returns nb::Error::WouldBlock if
+    /// no packet is available.
+    pub fn pipe(&mut self) -> Result<u8, nb::Error<D::Error>> {
+        let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
+        match fifo_status.rx_empty() {
+            true => Err(nb::Error::WouldBlock),
+            false => Ok(status.rx_p_no()),
+        }
+    }
+    
+    /// Clears all interrupts. Caller is recommended to call pipe, clear, read, followed by a
+    /// pipe/read loop.
+    pub fn clear_interrupts(&mut self) -> Result<(), D::Error> {
         let mut clear = Status(0);
         clear.set_rx_dr(true);
         clear.set_tx_ds(true);
         clear.set_max_rt(true);
         self.device.write_register(clear)?;
-
-        self.device
-            .read_register::<FifoStatus>()
-            .map(|(status, fifo_status)| {
-                if !fifo_status.rx_empty() {
-                    Some(status.rx_p_no())
-                } else {
-                    None
-                }
-            })
+        Ok(())
     }
 
     /// Is an in-band RF signal detected?
