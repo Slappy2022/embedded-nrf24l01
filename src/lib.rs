@@ -9,12 +9,10 @@ pub mod setup;
 mod command;
 mod config;
 mod device;
-mod error;
 mod payload;
 mod registers;
 
 pub use crate::config::{Configuration, CrcMode, DataRate};
-pub use crate::error::Error;
 pub use crate::payload::Payload;
 
 use crate::command::{FlushTx, ReadRxPayload, ReadRxPayloadWidth, WriteTxPayload};
@@ -84,15 +82,18 @@ where
     E: Debug,
     SpiE: Debug,
 {
-    pub fn new(ce: Ce, csn: Csn, spi: Spi) -> Result<Self, Error<SpiE>> {
-        let mut device = DeviceImpl::new(ce, csn, spi)?;
+    pub fn new(ce: Ce, csn: Csn, spi: Spi) -> Result<Option<Self>, SpiE> {
+        let mut device = match DeviceImpl::new(ce, csn, spi)? {
+            Some(device) => device,
+            None => return Ok(None),
+        };
         device.update_config(|config| config.set_pwr_up(true))?;
-        Ok(Self {
+        Ok(Some(Self {
             mode: Mode::Standby,
             device,
-        })
+        }))
     }
-    fn clear(&mut self, interrupts: Interrupts) -> Result<(), Error<SpiE>> {
+    fn clear(&mut self, interrupts: Interrupts) -> Result<(), SpiE> {
         let mut clear = Status(0);
         clear.set_rx_dr(interrupts.rx_dr);
         clear.set_tx_ds(interrupts.tx_ds);
@@ -100,11 +101,11 @@ where
         self.device.write_register(clear)?;
         Ok(())
     }
-    pub fn clear_interrupts(&mut self) -> Result<(), Error<SpiE>> {
+    pub fn clear_interrupts(&mut self) -> Result<(), SpiE> {
         self.clear(Interrupts::new().set_rx_dr().set_tx_ds().set_max_rt())?;
         Ok(())
     }
-    fn rx(&mut self) -> Result<(), nb::Error<Error<SpiE>>> {
+    fn rx(&mut self) -> Result<(), nb::Error<SpiE>> {
         if self.mode == Mode::Rx {
             return Ok(());
         }
@@ -115,7 +116,7 @@ where
         self.mode = Mode::Rx;
         Ok(())
     }
-    fn tx(&mut self) -> Result<(), Error<SpiE>> {
+    fn tx(&mut self) -> Result<(), SpiE> {
         if self.mode == Mode::Tx {
             return Ok(());
         }
@@ -125,25 +126,25 @@ where
         self.mode = Mode::Tx;
         Ok(())
     }
-    pub fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<Error<SpiE>>> {
+    pub fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
         self.device.send_command(&WriteTxPayload::new(packet))?;
         self.device.ce_enable();
         Ok(())
     }
-    fn is_tx_full(&mut self) -> Result<bool, Error<SpiE>> {
+    fn is_tx_full(&mut self) -> Result<bool, SpiE> {
         self.tx()?;
         let (_, fifo_status) = self.device.read_register::<FifoStatus>()?;
         Ok(fifo_status.tx_full())
     }
-    pub fn wait_tx_ready(&mut self) -> Result<(), nb::Error<Error<SpiE>>> {
+    pub fn wait_tx_ready(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
         match self.is_tx_full()? {
             true => Err(nb::Error::WouldBlock),
             false => Ok(()),
         }
     }
-    pub fn wait_tx_empty(&mut self) -> Result<(), nb::Error<Error<SpiE>>> {
+    pub fn wait_tx_empty(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
         let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
         if fifo_status.tx_empty() {
@@ -156,7 +157,7 @@ where
         }
         Err(nb::Error::WouldBlock)
     }
-    pub fn wait_rx_ready(&mut self) -> Result<u8, nb::Error<Error<SpiE>>> {
+    pub fn wait_rx_ready(&mut self) -> Result<u8, nb::Error<SpiE>> {
         self.rx()?;
         let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
         match fifo_status.rx_empty() {
@@ -164,7 +165,7 @@ where
             false => Ok(status.rx_p_no()),
         }
     }
-    pub fn read(&mut self) -> Result<Payload, nb::Error<Error<SpiE>>> {
+    pub fn read(&mut self) -> Result<Payload, nb::Error<SpiE>> {
         self.rx()?;
         let (_, payload_width) = self.device.send_command(&ReadRxPayloadWidth)?;
         let (_, payload) = self

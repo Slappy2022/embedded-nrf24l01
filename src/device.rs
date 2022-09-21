@@ -1,5 +1,4 @@
 use crate::command::{Command, ReadRegister, WriteRegister};
-use crate::error::Error;
 use crate::registers::{Config, Register, SetupAw, Status};
 use core::fmt::Debug;
 use embedded_hal::blocking::spi::Transfer;
@@ -26,7 +25,7 @@ impl<
     > DeviceImpl<Ce, Csn, Spi, E>
 {
     /// Construct a new driver instance.
-    pub fn new(mut ce: Ce, mut csn: Csn, spi: Spi) -> Result<Self, Error<SpiE>> {
+    pub fn new(mut ce: Ce, mut csn: Csn, spi: Spi) -> Result<Option<Self>, SpiE> {
         ce.set_low().unwrap();
         csn.set_high().unwrap();
 
@@ -42,16 +41,14 @@ impl<
             config,
         };
 
-        match device.is_connected() {
-            Err(e) => return Err(e),
-            Ok(false) => return Err(Error::NotConnected),
-            _ => {}
-        }
-        Ok(device)
+        Ok(match device.is_connected()? {
+            true => Some(device),
+            false => None,
+        })
     }
 
     /// Reads and validates content of the `SETUP_AW` register.
-    pub fn is_connected(&mut self) -> Result<bool, Error<SpiE>> {
+    pub fn is_connected(&mut self) -> Result<bool, SpiE> {
         let (_, setup_aw) = self.read_register::<SetupAw>()?;
         let valid = setup_aw.aw() <= 3;
         Ok(valid)
@@ -66,7 +63,7 @@ impl<
         SpiE: Debug,
     > Device for DeviceImpl<Ce, Csn, Spi, E>
 {
-    type Error = Error<SpiE>;
+    type Error = SpiE;
 
     fn ce_enable(&mut self) {
         self.ce.set_high().unwrap();
