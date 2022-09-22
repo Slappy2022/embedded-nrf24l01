@@ -29,37 +29,115 @@ pub const MIN_ADDR_BYTES: usize = 2;
 /// Maximum address length
 pub const MAX_ADDR_BYTES: usize = 5;
 
-#[derive(PartialEq)]
-enum Mode {
-    Standby,
-    Rx,
-    Tx,
+pub const NUM_PIPES: usize = 6;
+pub const RX_ADDR_LEN: usize = 5;
+pub const RX_ADDR_PREFIX_LEN: usize = 4;
+
+pub struct Config {
+    auto_retransmit_delay: u8,
+    auto_retransmit_count: u8,
+    data_rate: DataRate,
+    power: u8,
+    crc_mode: CrcMode,
+    frequency: u8,
+    rx_prefix: Option<[u8; RX_ADDR_PREFIX_LEN]>,
+    rx_enabled: [bool; NUM_PIPES],
+    rx_length: [Option<u8>; NUM_PIPES],
+    rx_auto_ack: [bool; NUM_PIPES],
+    rx_addr: [u8; NUM_PIPES],
 }
 
-struct Interrupts {
-    rx_dr: bool,
-    tx_ds: bool,
-    max_rt: bool,
-}
-impl Interrupts {
-    fn new() -> Self {
+impl Config {
+    pub fn default() -> Self {
         Self {
-            rx_dr: false,
-            tx_ds: false,
-            max_rt: false,
+            auto_retransmit_delay: 1,
+            auto_retransmit_count: 10,
+            data_rate: DataRate::R250Kbps,
+            power: 3,
+            crc_mode: CrcMode::TwoBytes,
+            frequency: 42,
+            rx_prefix: None,
+            rx_enabled: [false; NUM_PIPES],
+            rx_length: [None; NUM_PIPES],
+            rx_auto_ack: [true; NUM_PIPES],
+            rx_addr: [0; NUM_PIPES],
         }
     }
-    fn set_rx_dr(mut self) -> Self {
-        self.rx_dr = true;
+    pub fn auto_retransmit_delay(mut self, delay: u8) -> Self {
+        self.auto_retransmit_delay = delay;
         self
     }
-    fn set_tx_ds(mut self) -> Self {
-        self.tx_ds = true;
+    pub fn auto_retransmit_count(mut self, count: u8) -> Self {
+        self.auto_retransmit_count = count;
         self
     }
-    fn set_max_rt(mut self) -> Self {
-        self.max_rt = true;
+    pub fn data_rate(mut self, rate: DataRate) -> Self {
+        self.data_rate = rate;
         self
+    }
+    pub fn power(mut self, power: u8) -> Self {
+        self.power = power;
+        self
+    }
+    pub fn crc_mode(mut self, mode: CrcMode) -> Self {
+        self.crc_mode = mode;
+        self
+    }
+    pub fn frequency(mut self, freq: u8) -> Self {
+        self.frequency = freq;
+        self
+    }
+    pub fn rx_prefix(mut self, prefix: [u8; RX_ADDR_PREFIX_LEN]) -> Self {
+        self.rx_prefix = Some(prefix);
+        self
+    }
+    pub fn rx_full(mut self, pipe: u8, address: u8, length: u8, auto_ack: bool) -> Self {
+        assert!(pipe >= 1);
+        assert!(pipe < 6);
+        let pipe = pipe as usize;
+        self.rx_enabled[pipe] = true;
+        self.rx_addr[pipe] = address;
+        self.rx_length[pipe] = Some(length);
+        self.rx_auto_ack[pipe] = auto_ack;
+        self
+    }
+    pub fn rx(mut self, pipe: u8, address: u8) -> Self {
+        assert!(pipe >= 1);
+        assert!(pipe < 6);
+        let pipe = pipe as usize;
+        self.rx_enabled[pipe] = true;
+        self.rx_addr[pipe] = address;
+        self
+    }
+    fn configure<T: Configuration>(
+        self,
+        device: &mut T,
+    ) -> Result<(), <<T as Configuration>::Inner as Device>::Error> {
+        device.set_auto_retransmit(self.auto_retransmit_delay, self.auto_retransmit_count)?;
+        device.set_rf(&self.data_rate, self.power)?;
+        device.set_crc(self.crc_mode)?;
+        device.set_frequency(self.frequency)?;
+        device.set_pipes_rx_enable(&self.rx_enabled)?;
+        device.set_pipes_rx_lengths(&self.rx_length)?;
+        device.set_auto_ack(&self.rx_auto_ack)?;
+
+        // This improves the error rate, not sure why or if this is the best place for a wait
+        wait(100);
+
+        if let Some(rx_prefix) = self.rx_prefix {
+            let mut address = [0u8; RX_ADDR_LEN];
+            address[..rx_prefix.len()].copy_from_slice(&rx_prefix);
+            address[RX_ADDR_PREFIX_LEN] = self.rx_addr[1];
+            device.set_rx_addr(1, &address)?;
+
+            for i in 2..NUM_PIPES {
+                if self.rx_enabled[i] {
+                    device.set_rx_addr(i, &[self.rx_addr[i]])?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -82,16 +160,19 @@ where
     E: Debug,
     SpiE: Debug,
 {
-    pub fn new(ce: Ce, csn: Csn, spi: Spi) -> Result<Option<Self>, SpiE> {
-        let mut device = match DeviceImpl::new(ce, csn, spi)? {
-            Some(device) => device,
-            None => return Ok(None),
-        };
-        device.update_config(|config| config.set_pwr_up(true))?;
-        Ok(Some(Self {
+    pub fn new(ce: Ce, csn: Csn, spi: Spi, config: Config) -> Result<Self, Error<SpiE>> {
+        let mut result = Self {
             mode: Mode::Standby,
-            device,
-        }))
+            device: DeviceImpl::new(ce, csn, spi)?,
+        };
+        config.configure(&mut result)?;
+        result
+            .device
+            .update_config(|config| config.set_pwr_up(true))?;
+        Ok(result)
+    }
+    pub fn config() -> Config {
+        Config::default()
     }
     fn clear(&mut self, interrupts: Interrupts) -> Result<(), SpiE> {
         let mut clear = Status(0);
@@ -174,6 +255,40 @@ where
         Ok(payload)
     }
 }
+
+#[derive(PartialEq)]
+enum Mode {
+    Standby,
+    Rx,
+    Tx,
+}
+
+struct Interrupts {
+    rx_dr: bool,
+    tx_ds: bool,
+    max_rt: bool,
+}
+impl Interrupts {
+    fn new() -> Self {
+        Self {
+            rx_dr: false,
+            tx_ds: false,
+            max_rt: false,
+        }
+    }
+    fn set_rx_dr(mut self) -> Self {
+        self.rx_dr = true;
+        self
+    }
+    fn set_tx_ds(mut self) -> Self {
+        self.tx_ds = true;
+        self
+    }
+    fn set_max_rt(mut self) -> Self {
+        self.max_rt = true;
+        self
+    }
+}
 impl<Ce, Csn, Spi, E, SpiE> Configuration for Nrf24l01<Ce, Csn, Spi, E, SpiE>
 where
     Ce: OutputPin<Error = E>,
@@ -185,5 +300,23 @@ where
     type Inner = DeviceImpl<Ce, Csn, Spi, E>;
     fn device(&mut self) -> &mut Self::Inner {
         &mut self.device
+    }
+}
+
+fn wait(mut count: u32) {
+    while count > 0 {
+        unsafe { core::ptr::read_volatile(&count) };
+        count -= 1;
+    }
+}
+
+#[derive(Debug)]
+pub enum Error<E: Debug> {
+    NotConnected,
+    Spi(E),
+}
+impl<SpiE: Debug> From<SpiE> for Error<SpiE> {
+    fn from(e: SpiE) -> Self {
+        Error::Spi(e)
     }
 }

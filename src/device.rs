@@ -1,5 +1,6 @@
 use crate::command::{Command, ReadRegister, WriteRegister};
 use crate::registers::{Config, Register, SetupAw, Status};
+use crate::Error;
 use core::fmt::Debug;
 use embedded_hal::blocking::spi::Transfer;
 use embedded_hal::digital::v2::OutputPin;
@@ -25,7 +26,7 @@ impl<
     > DeviceImpl<Ce, Csn, Spi, E>
 {
     /// Construct a new driver instance.
-    pub fn new(mut ce: Ce, mut csn: Csn, spi: Spi) -> Result<Option<Self>, SpiE> {
+    pub fn new(mut ce: Ce, mut csn: Csn, spi: Spi) -> Result<Self, Error<SpiE>> {
         ce.set_low().unwrap();
         csn.set_high().unwrap();
 
@@ -41,10 +42,10 @@ impl<
             config,
         };
 
-        Ok(match device.is_connected()? {
-            true => Some(device),
-            false => None,
-        })
+        match device.is_connected()? {
+            true => Ok(device),
+            false => Err(Error::NotConnected),
+        }
     }
 
     /// Reads and validates content of the `SETUP_AW` register.
