@@ -125,9 +125,13 @@ impl Config {
         wait(100);
 
         if let Some(rx_prefix) = self.rx_prefix {
-            let mut address = [0u8; RX_ADDR_LEN];
-            address[..rx_prefix.len()].copy_from_slice(&rx_prefix);
-            address[RX_ADDR_PREFIX_LEN] = self.rx_addr[1];
+            let address = [
+                self.rx_addr[1],
+                rx_prefix[0],
+                rx_prefix[1],
+                rx_prefix[2],
+                rx_prefix[3],
+            ];
             device.set_rx_addr(1, &address)?;
 
             for i in 2..NUM_PIPES {
@@ -209,21 +213,23 @@ where
     }
     pub fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
+        // Not sure why, but we need to call empty here, rather than ready
+        self.wait_tx_empty()?;
         self.device.send_command(&WriteTxPayload::new(packet))?;
         self.device.ce_enable();
         Ok(())
     }
-    fn is_tx_full(&mut self) -> Result<bool, SpiE> {
-        self.tx()?;
-        let (_, fifo_status) = self.device.read_register::<FifoStatus>()?;
-        Ok(fifo_status.tx_full())
-    }
     pub fn wait_tx_ready(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
-        match self.is_tx_full()? {
-            true => Err(nb::Error::WouldBlock),
-            false => Ok(()),
+        let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
+        if !fifo_status.tx_full() {
+            return Ok(());
         }
+        if status.max_rt() {
+            self.device.send_command(&FlushTx)?;
+            self.clear(Interrupts::new().set_tx_ds().set_max_rt())?;
+        }
+        Err(nb::Error::WouldBlock)
     }
     pub fn wait_tx_empty(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
