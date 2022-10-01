@@ -213,8 +213,7 @@ where
     }
     pub fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
-        // Not sure why, but we need to call empty here, rather than ready
-        self.wait_tx_empty()?;
+        self.wait_tx_ready()?;
         self.device.send_command(&WriteTxPayload::new(packet))?;
         self.device.ce_enable();
         Ok(())
@@ -222,27 +221,29 @@ where
     pub fn wait_tx_ready(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
         let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
-        if !fifo_status.tx_full() {
-            return Ok(());
-        }
         if status.max_rt() {
             self.device.send_command(&FlushTx)?;
             self.clear(Interrupts::new().set_tx_ds().set_max_rt())?;
         }
-        Err(nb::Error::WouldBlock)
+        match fifo_status.tx_full() {
+            true => Err(nb::Error::WouldBlock),
+            false => Ok(()),
+        }
     }
     pub fn wait_tx_empty(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
         let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
-        if fifo_status.tx_empty() {
-            self.device.ce_disable();
-            return Ok(());
-        }
         if status.max_rt() {
             self.device.send_command(&FlushTx)?;
             self.clear(Interrupts::new().set_tx_ds().set_max_rt())?;
         }
-        Err(nb::Error::WouldBlock)
+        match fifo_status.tx_empty() {
+            true => {
+                self.device.ce_disable();
+                Ok(())
+            }
+            false => Err(nb::Error::WouldBlock),
+        }
     }
     pub fn wait_rx_ready(&mut self) -> Result<u8, nb::Error<SpiE>> {
         self.rx()?;
