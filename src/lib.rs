@@ -213,19 +213,19 @@ where
     }
     pub fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
-        self.wait_tx_ready()?;
+        self.wait_tx_empty()?;
         self.device.send_command(&WriteTxPayload::new(packet))?;
         self.device.ce_enable();
         Ok(())
     }
     pub fn wait_tx_ready(&mut self) -> Result<(), nb::Error<SpiE>> {
         self.tx()?;
-        let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
+        let (mut status, _) = self.device.read_register::<FifoStatus>()?;
         if status.max_rt() {
-            self.device.send_command(&FlushTx)?;
-            self.clear(Interrupts::new().set_tx_ds().set_max_rt())?;
+            (status, ()) = self.device.send_command(&FlushTx)?;
+            self.clear(Interrupts::new().set_max_rt())?;
         }
-        match fifo_status.tx_full() {
+        match status.tx_full() {
             true => Err(nb::Error::WouldBlock),
             false => Ok(()),
         }
@@ -235,7 +235,7 @@ where
         let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
         if status.max_rt() {
             self.device.send_command(&FlushTx)?;
-            self.clear(Interrupts::new().set_tx_ds().set_max_rt())?;
+            self.clear(Interrupts::new().set_max_rt())?;
         }
         match fifo_status.tx_empty() {
             true => {
