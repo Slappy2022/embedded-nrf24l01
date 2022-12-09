@@ -33,6 +33,112 @@ pub const NUM_PIPES: usize = 6;
 pub const RX_ADDR_LEN: usize = 5;
 pub const RX_ADDR_PREFIX_LEN: usize = 4;
 
+pub trait Nrf24l01Rx {
+    type Error;
+
+    fn set_address(&mut self, pipe: usize, address: &[u8]) -> Result<(), Self::Error>;
+    fn ready(&mut self) -> Result<u8, nb::Error<Self::Error>>;
+    fn recv(&mut self) -> Result<Payload, nb::Error<Self::Error>>;
+}
+
+pub struct Nrf24l01RxImpl<'a, Ce, Csn, Spi, E, SpiE>
+where
+    Ce: OutputPin<Error = E>,
+    Csn: OutputPin<Error = E>,
+    Spi: Transfer<u8, Error = SpiE>,
+    E: Debug,
+    SpiE: Debug,
+{
+    nrf24l01: &'a core::cell::RefCell<Nrf24l01<Ce, Csn, Spi, E, SpiE>>,
+}
+
+impl<'a, Ce, Csn, Spi, E, SpiE> Nrf24l01RxImpl<'a, Ce, Csn, Spi, E, SpiE>
+where
+    Ce: OutputPin<Error = E>,
+    Csn: OutputPin<Error = E>,
+    Spi: Transfer<u8, Error = SpiE>,
+    E: Debug,
+    SpiE: Debug,
+{
+    pub fn new(nrf24l01: &'a core::cell::RefCell<Nrf24l01<Ce, Csn, Spi, E, SpiE>>) -> Self {
+        Self { nrf24l01 }
+    }
+}
+
+impl<'a, Ce, Csn, Spi, E, SpiE> Nrf24l01Rx for Nrf24l01RxImpl<'a, Ce, Csn, Spi, E, SpiE>
+where
+    Ce: OutputPin<Error = E>,
+    Csn: OutputPin<Error = E>,
+    Spi: Transfer<u8, Error = SpiE>,
+    E: Debug,
+    SpiE: Debug,
+{
+    type Error = SpiE;
+
+    fn set_address(&mut self, pipe: usize, address: &[u8]) -> Result<(), Self::Error> {
+        self.nrf24l01.borrow_mut().set_rx_addr(pipe, address)
+    }
+    fn ready(&mut self) -> Result<u8, nb::Error<Self::Error>> {
+        self.nrf24l01.borrow_mut().wait_rx_ready()
+    }
+    fn recv(&mut self) -> Result<Payload, nb::Error<Self::Error>> {
+        self.nrf24l01.borrow_mut().read()
+    }
+}
+
+pub trait Nrf24l01Tx {
+    type Error;
+
+    fn set_address(&mut self, address: &[u8]) -> Result<(), Self::Error>;
+    fn ready(&mut self) -> Result<(), nb::Error<Self::Error>>;
+    fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<Self::Error>>;
+}
+
+pub struct Nrf24l01TxImpl<'a, Ce, Csn, Spi, E, SpiE>
+where
+    Ce: OutputPin<Error = E>,
+    Csn: OutputPin<Error = E>,
+    Spi: Transfer<u8, Error = SpiE>,
+    E: Debug,
+    SpiE: Debug,
+{
+    nrf24l01: &'a core::cell::RefCell<Nrf24l01<Ce, Csn, Spi, E, SpiE>>,
+}
+
+impl<'a, Ce, Csn, Spi, E, SpiE> Nrf24l01TxImpl<'a, Ce, Csn, Spi, E, SpiE>
+where
+    Ce: OutputPin<Error = E>,
+    Csn: OutputPin<Error = E>,
+    Spi: Transfer<u8, Error = SpiE>,
+    E: Debug,
+    SpiE: Debug,
+{
+    pub fn new(nrf24l01: &'a core::cell::RefCell<Nrf24l01<Ce, Csn, Spi, E, SpiE>>) -> Self {
+        Self { nrf24l01 }
+    }
+}
+
+impl<'a, Ce, Csn, Spi, E, SpiE> Nrf24l01Tx for Nrf24l01TxImpl<'a, Ce, Csn, Spi, E, SpiE>
+where
+    Ce: OutputPin<Error = E>,
+    Csn: OutputPin<Error = E>,
+    Spi: Transfer<u8, Error = SpiE>,
+    E: Debug,
+    SpiE: Debug,
+{
+    type Error = SpiE;
+
+    fn set_address(&mut self, address: &[u8]) -> Result<(), Self::Error> {
+        self.nrf24l01.borrow_mut().set_tx_addr(address)
+    }
+    fn ready(&mut self) -> Result<(), nb::Error<Self::Error>> {
+        self.nrf24l01.borrow_mut().wait_tx_empty()
+    }
+    fn send(&mut self, packet: &[u8]) -> Result<(), nb::Error<Self::Error>> {
+        self.nrf24l01.borrow_mut().send(packet)
+    }
+}
+
 pub struct Config {
     auto_retransmit_delay: u8,
     auto_retransmit_count: u8,
