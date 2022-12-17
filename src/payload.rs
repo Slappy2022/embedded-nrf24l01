@@ -1,3 +1,4 @@
+use crate::PAYLOAD_LEN;
 use core::ops::Deref;
 
 /// Represents a received packet. Stores 32 bytes and the actual length.
@@ -5,14 +6,14 @@ use core::ops::Deref;
 /// Use [`as_ref()`](#method.as_ref) or [`Deref`](#impl-Deref) to
 /// obtain a slice of the content.
 pub struct Payload {
-    data: [u8; 32],
+    data: [u8; PAYLOAD_LEN],
     len: usize,
 }
 
 impl Payload {
     /// Copy a slice
     pub fn new(source: &[u8]) -> Self {
-        let mut data = [0; 32];
+        let mut data = [0; PAYLOAD_LEN];
         let len = source.len().min(data.len());
         data[0..len].copy_from_slice(&source[0..len]);
         Payload { data, len }

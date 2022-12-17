@@ -32,6 +32,7 @@ pub const MAX_ADDR_BYTES: usize = 5;
 pub const NUM_PIPES: usize = 6;
 pub const RX_ADDR_LEN: usize = 5;
 pub const RX_ADDR_PREFIX_LEN: usize = 4;
+pub const PAYLOAD_LEN: usize = 32;
 
 pub trait Nrf24l01Rx {
     type Error;
